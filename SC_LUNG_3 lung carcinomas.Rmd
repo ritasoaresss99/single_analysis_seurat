@@ -1,0 +1,431 @@
+---
+title: "sc_lung_3 lung carcinomas"
+output:
+  pdf_document: default
+  html_document: default
+date: "2023-05-23"
+---
+
+#BIG NOTE:
+#ALL THE GENES ARE IN ENSEMBL NOMENCLATURE, EXCEPT THE MITOCONDRIAL GENES
+#THOSE ARE IN THE GENE SYMBOLS NOMENCLATURE
+
+#INSTALLATION:
+```{r}
+install.packages('MatrixGenerics', version = '3.17')
+BiocManager::install("matrixStats")
+
+#installation cibersort:
+install.packages("remotes")
+remotes::install_github("omnideconv/immunedeconv")
+```
+
+
+#libraries
+```{r}
+library(Seurat)
+library(SeuratData)
+library(gridExtra)
+library(tidyverse)
+library(data.table)
+library(SummarizedExperiment)
+library(MatrixGenerics)
+library(SingleCellExperiment)
+library(scds)
+library(useful)
+library(ggplot2)
+suppressMessages(library(immunedeconv))
+```
+
+```{r}
+#installation of cibersort
+
+#library(devtools)
+#install_github("immunogenomics/harmony")
+#library("CIBERSORT.R")
+#source("CIBERSORT.R")
+
+#intallation of singleR
+```
+
+#DETERMINE THE DIRECTORY:
+```{r}
+knitr::opts_knit$set(root.dir = "C:/Users/ritas/Desktop/TESE_IMM/SC_LUNG/SC_LUNG/E-MTAB-6653/")
+```
+
+
+#load the data:
+https://www.ebi.ac.uk/gxa/sc/experiments/E-MTAB-6653/downloads 
+#1º:Load the cells
+```{r}
+mtx_cols <- read.table("C:/Users/ritas/Desktop/TESE_IMM/SC_LUNG/SC_LUNG/E-MTAB-6653/barcodes.mtx_cols", header = FALSE, sep = "\t")
+View(mtx_cols)
+
+barcodes<-mtx_cols$V1
+barcodes<-as.data.frame(barcodes,header=FALSE,rownames = FALSE)
+file_path_<- file.path("C:/Users/ritas/Desktop/TESE_IMM/SC_LUNG/SC_LUNG/E-MTAB-6653/", "barcodes.tsv")
+write.table(barcodes,file_path_,sep="\t",quote = FALSE,row.names = FALSE,col.names = FALSE)
+View(barcodes)
+```
+
+#2º:Load the genes, convert into tsv and compress into .gz
+```{r}
+mtx_rows <- read.table("C:/Users/ritas/Desktop/TESE_IMM/SC_LUNG/SC_LUNG/E-MTAB-6653/genes.mtx_rows", header = FALSE, sep = "\t")
+mtx_rows<-as.data.frame(mtx_rows$V1)
+View(mtx_rows)
+
+genes<-mtx_rows$`mtx_rows$V1`
+genes<-as.data.frame(genes,header=FALSE,rownames = FALSE)
+file_path <- file.path("C:/Users/ritas/Desktop/TESE_IMM/SC_LUNG/SC_LUNG/E-MTAB-6653/", "genes.tsv")
+write.table(genes,file_path,sep="\t",quote = FALSE,row.names = FALSE,col.names = FALSE)
+View(genes)
+```
+
+#3º:TRY TO CONVERT THE ENSEMBL GENES INTO GENE SYMBOL AND DETERMINE THE MITOCONDRIAL GENES:
+```{r}
+#installations missing:
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("biomaRt")
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("org.Hs.eg.db")
+
+library(Seurat)
+library(patchwork)
+library(dplyr)
+library(biomaRt)
+library(org.Hs.eg.db)
+library(ggplot2)
+library(Matrix)
+
+#input list of the genes in the genes.tsv:
+data_genes<-genes$genes
+
+#BiomaRt method:
+listEnsembl()
+ensembl_<-useEnsembl(biomart = "genes")
+datasets<-listDatasets(ensembl_)
+ensembl <- useMart("ensembl", dataset="hsapiens_gene_ensembl")
+attr<-listAttributes(ensembl)#here we define the reference to which type of conversion type we want to convert the ensembl genes
+bm <- getBM(attributes=c("ensembl_gene_id", "external_gene_name"), values=data_genes, mart=ensembl)
+#THE TOTAL NUMBER OF GENES: 69299
+
+# Check mitochondrial genes before conversion
+print("Mitochondrial genes before conversion:")
+print(grep("^MT-", data_genes, value = TRUE))#NO MITOCONDRIAL GENES BEFORE CONVERSION
+
+#DETERMINE THE GENE SYMBOLS:
+gene.symbols <- bm$external_gene_name[match(data_genes, bm$ensembl_gene_id)]
+features_<-as.matrix(cbind(genes$genes,gene.symbols))
+colnames(features_)<-c("ensembl_genes","gene_symbols")
+
+#CREATE A NEW DATAFRAME WITH ENSEMBL GENES AND THE MITOCONDRIAL GENES IN GENE.SYMBOLS:
+features<-as.data.frame(features_)
+MT_GENES<-print(grep("^MT-",features_, value = TRUE))#13 MITOCONDRIAL GENES AFTER CONVERSION
+MT_GENES<-as.list(MT_GENES)
+features_d<- features[match(features$gene_symbols, MT_GENES, nomatch = 0) != 0,]
+
+#CREATE THE FINAL FEATURES DATAFRAME:
+features_df<-as.data.frame(features_)
+#DO ONE BY ONE:
+features_df$ensembl_genes[features_df$ensembl_genes=="ENSG00000198695"]<-"MT-ND6"
+features_df$ensembl_genes[features_df$ensembl_genes=="ENSG00000198712"]<-"MT-CO2"
+features_df$ensembl_genes[features_df$ensembl_genes=="ENSG00000198727"]<-"MT-CYB"
+features_df$ensembl_genes[features_df$ensembl_genes=="ENSG00000198763"]<-"MT-ND2"
+features_df$ensembl_genes[features_df$ensembl_genes=="ENSG00000198786"]<-"MT-ND5"
+features_df$ensembl_genes[features_df$ensembl_genes=="ENSG00000198804"]<-"MT-CO1"#
+features_df$ensembl_genes[features_df$ensembl_genes=="ENSG00000198840"]<-"MT-ND3"
+features_df$ensembl_genes[features_df$ensembl_genes=="ENSG00000198886"]<-"MT-ND4"
+features_df$ensembl_genes[features_df$ensembl_genes=="ENSG00000198888"]<-"MT-ND1"
+features_df$ensembl_genes[features_df$ensembl_genes=="ENSG00000198899"]<-"MT-ATP6"
+features_df$ensembl_genes[features_df$ensembl_genes=="ENSG00000198938"]<-"MT-CO3"
+features_df$ensembl_genes[features_df$ensembl_genes=="ENSG00000212907"]<-"MT-ND4L"
+features_df$ensembl_genes[features_df$ensembl_genes=="ENSG00000228253"]<-"MT-ATP8"
+View(features_df)
+#CREATE THE TSV FILE WITH GENES CALLED FEATURES.TSV
+file_path <- file.path("C:/Users/ritas/Desktop/TESE_IMM/SC_LUNG/SC_LUNG/E-MTAB-6653/", "features.tsv")
+write.table(features_df,file_path,sep="\t",quote = FALSE,row.names = FALSE,col.names = FALSE)
+#1823 genes-not converted
+#22156 genes from the 23979 were actually converted
+
+######################
+#OPTIONAL!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!IF THE WE WANT THE FEATURES TO BE IN GENE #SYMBOLS NOMENCLATURE TO THE ONES THAT CAN DO THAT CONVERTION
+###########################
+#CREATE A DATAFRAME WITH THE GENE NAMES TO THE ENSEMBL IDS THAT HAD THE CONVERTED RESTPECTIVELY GENE NAMES AND IN CASE THEY DON'T MANTAIN FOR THOSE THE ENSEMBL IDS:
+bm$ensembl_gene_id<-ifelse(bm$external_gene_name!="",bm$external_gene_name,bm$ensembl_gene_id )
+
+# View the updated dataframe
+print(bm)
+features_df<-as.data.frame(bm$ensembl_gene_id)
+```
+
+
+#4º:ALL THE DATASET IN THE ACCORDING FORMATS ACCEPTED BY THE FUNCTION READ10X
+```{r}
+#gene.column = 1
+lung.data <- Read10X(data.dir="C:/Users/ritas/Desktop/TESE_IMM/SC_LUNG/SC_LUNG/E-MTAB-6653",gene.column = 1)
+
+lung <- CreateSeuratObject(counts = lung.data, project = "lung", min.cells = 3, min.features = 200)
+View(lung)
+```
+
+
+#DETERMINE THE PERCENTAGE OF MITOCONDRIAL GENES ACCORDING TO THE PATTERN:
+```{r}
+lung[["percent.mt"]] <- PercentageFeatureSet(lung, pattern = "^mt-") 
+#OR
+lung[["percent.mt"]] <- PercentageFeatureSet(lung, pattern = "^MT-") 
+VlnPlot(lung,features = c("nFeature_RNA","nCount_RNA","percent.mt"),ncol=3)
+
+```
+
+#OVERVIEW OF THE NFEATURE_RNA AND NCOUNT_RNA AND PERCENT.MT:
+```{r}
+View(lung@meta.data)
+FeatureScatter(lung,feature1 = "nCount_RNA",feature2 = "nFeature_RNA")+geom_smooth(method = "lm")
+
+#COMPARING PLOTS:
+plot1 <- FeatureScatter(lung, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(lung, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+plot2
+```
+
+#FILTERING:
+```{r}
+lung<-subset(lung,subset=nFeature_RNA>200 & nFeature_RNA<2500 & percent.mt<5)
+#FIND DUBLETS:    [SOME AREAS THAT WERE MORE SEQUENCED, IN DUPLICATES]
+lung_sce <- as.SingleCellExperiment(lung)
+lung_sce <- cxds_bcds_hybrid(lung_sce, estNdbl=TRUE)#Function to find doublets/multiples in UMI
+lung <- AddMetaData(
+  object = lung,
+  metadata = lung_sce$hybrid_call,
+  col.name = "doublet"
+)
+table(lung_sce$hybrid_call)
+lung<- subset(lung, subset = doublet==FALSE)
+
+#FALSE:26215
+#TRUE:434 DOUBLETS
+```
+
+#3.Normalize data
+```{r}
+#1º:SEE THE MEANS AND VARIANCE OF THE DATA
+means <- sparseMatrixStats::rowMeans2(lung@assays$RNA@counts)
+variance <- sparseMatrixStats::rowVars(lung@assays$RNA@counts)
+plot(means, variance)
+```
+
+#2-A.TRY TO NORMALIZE THE DATA WITH LOG NORMALIZE:
+```{r}
+lung.norm<- NormalizeData(lung, normalization.method = "LogNormalize")
+
+means <- sparseMatrixStats::rowMeans2(as.matrix(lung.norm@assays$RNA@data))
+variance <- sparseMatrixStats::rowVars(lung.norm@assays$RNA@data)
+plot(means, variance)
+```
+
+#2-B.TRY TO NORMALIZE THE DATA WITH SCTransform:
+#NOTE:THE SCTRANSFORM TOOK A LONG TIME AND LEAD THE PC DOWN, SO I OPTED TO GO WITH THE CLASSIC NORMALIZATION:
+```{r}
+lung_sctranform <- SCTransform(lung,verbose=FALSE)
+
+means_sctranform<- sparseMatrixStats::rowMeans2(lung_sctranform@assays$SCT@data)
+variance_sctranform<- sparseMatrixStats::rowVars(lung_sctranform@assays$SCT@data)
+plot(means_sctranform, variance_sctranform)
+
+```
+
+
+#3.SCALING (optional)------------------------------
+```{r}
+hist(sparseMatrixStats::colSums2(lung.norm@assays$RNA@data), main = "Counts per Cell")
+```
+
+#4.IDENTIFY HIGHLY VARIABLE FEATURES (GENES)---------------------------------------
+```{r}
+nsclc <- FindVariableFeatures(lung.norm)
+
+#WITH LOG NORMALIZE:
+to.plot <- data.table(means=rowMeans(nsclc@assays$RNA@data),
+                      variance=rowVars(as.matrix(nsclc@assays$RNA@data)),
+                      hvg=(rownames(nsclc@assays$RNA@data) %in% VariableFeatures(nsclc)))
+####################################
+```
+#Identify the 10 most highly variable genes:
+```{r}
+top10<-head(VariableFeatures(nsclc),10)
+top100<-head(VariableFeatures(nsclc),100)
+print(top10)
+print(top100)
+```
+
+#Plot variable features with and without labels:
+```{r}
+plot1<-VariableFeaturePlot(nsclc)
+LabelPoints(plot=plot1,points = top10,repel = TRUE)#REPEL=TRUE, SHOWS THET POINTS WELL DISTINGUISH BETWEEN EACH OTHER.
+```
+##5.SCALING
+REMOVE THE DESVIATIONS THAT LEAD TO THE CLUSTER OF THE CELLS, CAUSED BY THE DIFFERENCES ON CELL CYCLE OF THIS CELLS (BIOLOGICAL PROBLEM) OR THE BATCH EFFECT (TECNIQUAL PROBLEM); AND NOT BY THE BIOLOGICAL EFFECT.
+
+```{r}
+all.genes<-rownames(nsclc)
+nsclc.scaled<-ScaleData(nsclc,features = all.genes)
+str(nsclc.scaled)
+#notes:
+#normalized counts is stored in the data slot
+#scaling data stored in scale.data
+```
+#B.DOWNSTREAM ANALYSIS
+#6.Perform Linear dimensionality reduction------------------------------------------------------------------------------
+```{r}
+#6-A:TO PCA dimensionality reduction
+lung<-RunPCA(nsclc.scaled,features = VariableFeatures(object = nsclc.scaled))
+print(lung[["pca"]],dims=1:5,nfeatures=10)
+DimHeatmap(lung,dims=1,cells=500,balanced = TRUE)
+```
+```{r}
+#6-B:FindNeighbors
+#PARAMETERS:
+#k.param: defines k for the k-nearest neighbor algorithm (depends- not a right number of k)
+#reduction: Reduction to use as input for building the (S)NN
+lung <- FindNeighbors(lung, k.param=10, reduction = "pca")
+```
+
+```{r}
+#6-C:FindClusters
+#PARAMETERS:
+#RESOLUTION: Value of the resolution parameter, use a value above (below) 1.0 if you want to obtain a larger (smaller) number of communities.
+#ex: resolution=0.5- 24 communities; resolution=0.8- 7communities
+lung <- FindClusters(lung,resolution = 0.2)
+#26 clusters
+```
+
+```{r}
+#6-D:Plot the clusters:
+p <- ggplot(data=as.data.table(lung@meta.data)[,.N,by="seurat_clusters"], mapping = aes(x=seurat_clusters, y=N, fill=seurat_clusters)) +
+  geom_bar(stat="identity") +
+  labs(x="Cluster Number", y="Number of Cells in that Cluster") +
+  theme_classic()
+print(p)
+```
+
+#UMAP VISUALIZATION:
+```{r}
+lung <- RunUMAP(lung, dims = 1:10)
+#PLOT DIM:
+#pt.size: Adjust point size for plotting
+#shuffle: Whether to randomly shuffle the order of points. This can be useful for crowded plots if points of interest are being buried. (default is FALSE)
+DimPlot(lung, reduction = "umap", pt.size = NULL, shuffle = TRUE) + coord_fixed()
+ElbowPlot(lung)
+```
+#7-CELL ANOTATION-------------------------------------------------------------------------------------------------
+
+#OPTION-A:Method 2-AUTOMATIC ASSIGMENT ANOTATIONS
+```{r}
+#BiocManager::install("ensembldb")
+library(celldex)
+ref <- BlueprintEncodeData(ensembl = TRUE)
+ref
+View(ref)
+
+library(SingleR)
+# predict cell types based on the reference
+pred <- SingleR(test=as.SingleCellExperiment(lung.norm), ref=ref, labels=ref$label.main)
+table(pred$labels)
+lung$singleR_annot = pred$labels
+
+#x<-as.data.frame(pred@metadata)
+
+MANUAL_CELL_ANNOTATION<-DimPlot(lung, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
+#REFERENCE BASED ASSIGNMENT
+REFERENCE_CELL_ANNOTATION<-DimPlot(lung, reduction = "umap", label = TRUE, group.by="singleR_annot",pt.size = 0.5,repel = TRUE) + NoLegend()
+MANUAL_CELL_ANNOTATION+REFERENCE_CELL_ANNOTATION
+```
+
+#SEE IN WHICH CELLS PLCG1 IS EXPRESSED
+```{r}
+VlnPlot(lung,features="ENSG00000124181")#expression of PLCG1 between all clusters
+
+
+
+EXP_PLCG1<-FeaturePlot(lung, features = "ENSG00000124181")
+EXP_EGFR<-FeaturePlot(lung, features = "ENSG00000146648")
+#COMPARE THE EXPRESSION OF PLCG1 WITH THE REFERENCE BASED ASSIGNMENT CELL ANNOTATION:
+FINAL_PLOT<-REFERENCE_CELL_ANNOTATION+EXP_PLCG1
+PLOT_EGFR<-REFERENCE_CELL
+pdf(file = "C:/Users/ritas/Desktop/TESE_IMM/SC_LUNG/SC_LUNG/E-MTAB-6653/PLCG1_EXP_SC_CELL")
+plot(FINAL_PLOT,)
+dev.off()
+
+png(filename = "C:/Users/ritas/Desktop/TESE_IMM/SC_LUNG/SC_LUNG/E-MTAB-6653/PLCG1_EXP_SC_CELL",) 
+plot(FINAL_PLOT)
+dev.off()
+
+
+
+```
+######################
+GET THE DATA OF THE COUNTS WITH THE BARCODES ANNOTATED:
+```{r}
+#1º Retrieve cell type annotations:
+cell_annotated <- lung$singleR_annot
+PLCG1 <- "ENSG00000124181"
+
+#2º Extract expression values of the gene of interest
+expression_values <- FetchData(lung, vars = PLCG1)
+
+#3º Combine cell type annotations and expression values into a table
+expression_table <- data.frame(CellType = cell_annotated, Expression = expression_values)
+
+#4º View the expression table
+head(expression_table)
+
+#5º Save the file with the expression of PLCG1 across all the cell types annotated automaticall:
+save(expression_table,file="expression_table.Rda")
+
+```
+
+######################################################################
+#COMPARE THE EXPRESSION BETWEEN THE MAIN CELL TYPES THAT WE SEE THAT PLCG1 IS MORE EXPRESSED-WILCOX-TEST:
+######################################################################
+
+```{r}
+load("expression_table.Rda")
+print(expression_table)
+```
+```{r}
+# 1º: Extract the expression values of the gene for each cell type
+expression_endothelial <- expression_table[expression_table$CellType == "Endothelial cells", ]
+  
+expression_Adipocytes <- expression_table[expression_table$CellType =="Adipocytes", ]
+#VS
+expression_CD8_T_cells <- expression_table[expression_table$CellType =="CD8+ T-cells", ]
+
+expression_CD4_T_cells <- expression_table[expression_table$CellType =="CD4+ T-cells", ]
+
+
+# 2º: Perform Wilcoxon test-IT DOESN'T MATTER THE ORDER, BECAUSE THIS TEST DOESN'T TAKE IN ACCOUNT THE DIRECTION OF EXPRESSION
+#OPTION_A:expression_endothelial, expression_CD8_T_cells
+wilcox_result_A<- wilcox.test(expression_endothelial$ENSG00000124181, expression_CD8_T_cells$ENSG00000124181)
+print(wilcox_result_A)
+
+#OPTION_B:expression_endothelial, expression_CD4_T_cells
+wilcox_result_B <- wilcox.test(expression_endothelial$ENSG00000124181, expression_CD4_T_cells$ENSG00000124181)
+print(wilcox_result_B)
+
+#OPTION_C:expression_Adipocytes, expression_CD8_T_cells
+wilcox_result_C<- wilcox.test(expression_Adipocytes$ENSG00000124181, expression_CD8_T_cells$ENSG00000124181)
+print(wilcox_result_C)
+
+#OPTION_D:expression_Adipocytes, expression_CD4_T_cells
+wilcox_result_D<- wilcox.test(expression_Adipocytes$ENSG00000124181, expression_CD4_T_cells$ENSG00000124181)
+print(wilcox_result_D)
+
+```
+
